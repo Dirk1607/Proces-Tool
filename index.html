@@ -114,7 +114,7 @@ const statusEl = $('status');
 function setStatus(msg, kind){ statusEl.className = 'status' + (kind ? ' ' + kind : ''); statusEl.innerHTML = msg; }
 
 // Versie — hoog deze op bij elke deploy, zo zie je meteen of de juiste build live staat.
-const VERSION = 'v1.5';
+const VERSION = 'v1.6';
 const BUILD = '2026-06-29';
 if ($('copyright')) $('copyright').innerHTML = '© ' + new Date().getFullYear() + ' The Next Level · Proces-tool ' + VERSION + ' (' + BUILD + ')<br>Alle rechten voorbehouden.';
 

@@ -114,7 +114,7 @@ const statusEl = $('status');
 function setStatus(msg, kind){ statusEl.className = 'status' + (kind ? ' ' + kind : ''); statusEl.innerHTML = msg; }
 
 // Versie — hoog deze op bij elke deploy, zo zie je meteen of de juiste build live staat.
-const VERSION = 'v1.6';
+const VERSION = 'v1.7';
 const BUILD = '2026-06-29';
 if ($('copyright')) $('copyright').innerHTML = '© ' + new Date().getFullYear() + ' The Next Level · Proces-tool ' + VERSION + ' (' + BUILD + ')<br>Alle rechten voorbehouden.';
 
@@ -486,7 +486,8 @@ function parseMail(text, fallbackSubject){
     // geen @mail-kop: hele tekst = body, documentnaam = onderwerp
     return { to: '', cc: '', subject: fallbackSubject || '', body: t.trim() };
   }
-  const lines = t.replace(/^\s*@mail\b[^\n]*\n?/i, '').split('\n');
+  const zonderKop = t.replace(/^\s*@mail\b[^\n]*\n?/i, '');  // alles na de @mail-regel
+  const lines = zonderKop.split('\n');
   const out = { to: '', cc: '', subject: '', body: '' };
   let i = 0;
   for (; i < lines.length; i++){
@@ -502,6 +503,9 @@ function parseMail(text, fallbackSubject){
     else break;                                            // eerste niet-kopregel = start body
   }
   out.body = lines.slice(i).join('\n').trim();
+  // Vangnet: als er geen losse body-tekst staat maar er wél documentatie is,
+  // gebruik dan de volledige documentatie (zonder de @mail-regel) als mailtekst.
+  if (!out.body) out.body = zonderKop.trim();
   if (!out.subject) out.subject = fallbackSubject || '';
   return out;
 }

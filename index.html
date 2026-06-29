@@ -66,6 +66,7 @@
   <button class="btn primary" id="btn-save" title="Opslaan naar het huidige bestand">💾 Opslaan</button>
   <button class="btn" id="btn-saveas" title="Opslaan als… (nieuwe locatie/naam kiezen)">Opslaan als…</button>
   <button class="btn" id="btn-svg">Export SVG</button>
+  <button class="btn" id="btn-mail" title="Open dit document als e-mail in je mailprogramma" disabled>✉ Mail openen</button>
 </header>
 
 <main>
@@ -157,6 +158,7 @@ async function importXml(xml){
     await modeler.importXML(xml);
     colorEvents();
     colorLanes();
+    colorMails();
     validateTaskNames();
     fitView();
   } catch (e){
@@ -451,6 +453,107 @@ $('btn-save').addEventListener('click', save);
 $('btn-saveas').addEventListener('click', saveAs);
 $('btn-svg').addEventListener('click', exportSvg);
 
+// ---- Mailto: een document-element als e-mail openen ----
+// Mailgegevens leven in het documentatie-veld (bpmn:documentation, ons "doc"-veld),
+// zodat ze AI-edits overleven en bewerkbaar zijn in het eigenschappen-paneel.
+// Formaat:
+//   @mail
+//   aan: klant@voorbeeld.be
+//   cc: boekhouder@voorbeeld.be
+//   onderwerp: Maandafsluiting mei
+//   ---
+//   Beste, ...vrije tekst die de mailtekst wordt...
+const MAIL_SJABLOON = '@mail\naan: \ncc: \nonderwerp: \n---\nBeste,\n\n';
+
+function getDoc(el){
+  const bo = el && el.businessObject;
+  return (bo && bo.documentation && bo.documentation[0] && bo.documentation[0].text) || '';
+}
+function isMailDoc(el){
+  return el && el.type === 'bpmn:DataObjectReference' && /^\s*@mail\b/i.test(getDoc(el));
+}
+// Documentatie-tekst programmatisch zetten (zelfde pad als het eigenschappen-paneel)
+function setDoc(el, text){
+  const moddle = modeler.get('moddle'), modeling = modeler.get('modeling');
+  const docEl = moddle.create('bpmn:Documentation', { text });
+  modeling.updateModdleProperties(el, el.businessObject, { documentation: [docEl] });
+}
+
+// "@mail"-blok ontleden naar {to, cc, subject, body}
+function parseMail(text, fallbackSubject){
+  const t = (text || '').replace(/\r\n/g, '\n');
+  if (!/^\s*@mail\b/i.test(t)){
+    // geen @mail-kop: hele tekst = body, documentnaam = onderwerp
+    return { to: '', cc: '', subject: fallbackSubject || '', body: t.trim() };
+  }
+  const lines = t.replace(/^\s*@mail\b[^\n]*\n?/i, '').split('\n');
+  const out = { to: '', cc: '', subject: '', body: '' };
+  let i = 0;
+  for (; i < lines.length; i++){
+    const ln = lines[i];
+    if (/^\s*---\s*$/.test(ln)){ i++; break; }            // expliciete scheiding kop/body
+    const m = ln.match(/^\s*(aan|to|cc|onderwerp|subject)\s*:\s*(.*)$/i);
+    if (m){
+      const k = m[1].toLowerCase(), v = m[2].trim();
+      if (k === 'aan' || k === 'to') out.to = v;
+      else if (k === 'cc') out.cc = v;
+      else out.subject = v;
+    } else if (ln.trim() === ''){ i++; break; }            // lege regel = einde kop
+    else break;                                            // eerste niet-kopregel = start body
+  }
+  out.body = lines.slice(i).join('\n').trim();
+  if (!out.subject) out.subject = fallbackSubject || '';
+  return out;
+}
+
+function buildMailto(m){
+  let url = 'mailto:' + (m.to || '').trim();
+  const p = [];
+  if (m.cc) p.push('cc=' + encodeURIComponent(m.cc.trim()));
+  if (m.subject) p.push('subject=' + encodeURIComponent(m.subject));
+  if (m.body) p.push('body=' + encodeURIComponent(m.body));
+  if (p.length) url += '?' + p.join('&');
+  return url;
+}
+
+function openMail(){
+  const sel = modeler.get('selection').get().filter(e => e.type === 'bpmn:DataObjectReference');
+  if (sel.length !== 1){ setStatus('Klik eerst één document-element aan (de "pagina" met ezelsoor).', 'err'); return; }
+  const el = sel[0];
+  const doc = getDoc(el);
+  const naam = (el.businessObject && el.businessObject.name) || '';
+  if (!doc.trim()){
+    if (confirm('Dit document heeft nog geen mailinhoud.\n\nWil je een mailsjabloon invullen? (vul daarna "aan", "onderwerp" en de tekst in via het Documentatie-veld rechts)')){
+      setDoc(el, MAIL_SJABLOON);
+      setStatus('Mailsjabloon toegevoegd. Vul rechts het Documentatie-veld in en klik nogmaals op "Mail openen".', 'ok');
+    }
+    return;
+  }
+  const m = parseMail(doc, naam);
+  const a = document.createElement('a');
+  a.href = buildMailto(m);
+  document.body.appendChild(a); a.click(); a.remove();
+  setStatus('E-mail geopend in je mailprogramma' + (m.to ? ' (aan ' + esc(m.to) + ')' : '') + '.', 'ok');
+}
+$('btn-mail').addEventListener('click', openMail);
+
+// Knop in/uitschakelen + mail-documenten visueel markeren bij selectiewijziging
+try {
+  modeler.get('eventBus').on('selection.changed', (e) => {
+    const sel = (e.newSelection || []).filter(x => x.type === 'bpmn:DataObjectReference');
+    $('btn-mail').disabled = sel.length !== 1;
+  });
+} catch(_){}
+
+// Mail-documenten een zacht-gele vulling geven (zuiver visueel, na elke import)
+function colorMails(){
+  try {
+    const reg = modeler.get('elementRegistry'), modeling = modeler.get('modeling');
+    const mails = reg.filter(isMailDoc);
+    if (mails.length) modeling.setColor(mails, { fill: '#fff7e0', stroke: '#b8860b' });
+  } catch(e){ console.warn('mail-kleur mislukt', e); }
+}
+
 // ---- Opslaan in een bestand (File System Access API, Chrome/Edge) ----
 const getXml = () => modeler.saveXML({ format: true }).then(r => r.xml);
 const BPMN_TYPE = [{ description: 'BPMN-diagram', accept: { 'application/xml': ['.bpmn'] } }];
@@ -537,6 +640,13 @@ Technische regels (altijd volgen):
 - Zet de rol die het proces START als EERSTE in "lanes" (die komt bovenaan, zodat het proces linksboven begint).
 - Vermijd onnodig heen-en-weer springen tussen banen: ken een stap alleen een andere rol toe als die stap echt door iemand anders wordt uitgevoerd. Hou opeenvolgende stappen van dezelfde rol bij elkaar. Gebruik liever weinig rollen (2 à 3) dan veel.
 - Elk element kan een veld "doc" hebben (extra toelichting van de gebruiker); behoud dat ongewijzigd tenzij de opdracht het expliciet aanpast.
+- Gaat een document-element over een e-mail die VERSTUURD wordt (bv. een mailtje naar de klant of de boekhouder), zet dan in "doc" een mailblok in dit formaat (zodat de gebruiker het met één klik als mailto kan openen):
+  @mail
+  aan: <e-mailadres of leeg>
+  onderwerp: <korte onderwerpregel>
+  ---
+  <korte voorbeeld-mailtekst in het Nederlands>
+  Laat "aan" leeg als je het adres niet kent. Gebruik dit blok alleen voor échte uit te sturen mails, niet voor gewone documenten.
 
 Huisstijl (altijd volgen):
 - Taal: Nederlands.

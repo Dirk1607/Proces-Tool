@@ -57,7 +57,7 @@
 <body>
 
 <header>
-  <h1>TNL Proces-tool <small>· beschrijf → diagram → bijwerken</small></h1>
+  <h1>TNL Proces-tool <small>· beschrijf → diagram → bijwerken</small> <small id="ver" style="color:var(--orange);font-weight:700"></small></h1>
   <div class="sp"></div>
   <button class="btn" id="btn-new">Nieuw</button>
   <button class="btn" id="btn-open">Openen…</button>
@@ -94,8 +94,10 @@
     </details>
 
     <div class="hint">
-      Tip: Claude zet je tekst om naar stappen, beslissingen en pijlen in BPMN. Daarna sleep en wijzig je vrij in het diagram. Opslaan = download .bpmn (later in een bibliotheek).
+      Tip: Claude zet je tekst om naar stappen, beslissingen en pijlen in BPMN. Daarna sleep en wijzig je vrij in het diagram. Opslaan = bewaren in je gekozen map (.bpmn).
     </div>
+    <div class="sp" style="flex:1"></div>
+    <div class="hint" id="copyright" style="border-top:1px solid var(--border);padding-top:8px;font-size:11px"></div>
   </aside>
 
   <div class="wrap-canvas">
@@ -116,6 +118,12 @@ import { layoutProcess } from 'https://cdn.jsdelivr.net/npm/bpmn-auto-layout@0.3
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
 function setStatus(msg, kind){ statusEl.className = 'status' + (kind ? ' ' + kind : ''); statusEl.innerHTML = msg; }
+
+// Versie — hoog deze op bij elke deploy, zo zie je meteen of de juiste build live staat.
+const VERSION = 'v1.2';
+const BUILD = '2026-06-29';
+if ($('ver')) $('ver').textContent = VERSION + ' · ' + BUILD;
+if ($('copyright')) $('copyright').innerHTML = '© ' + new Date().getFullYear() + ' The Next Level · Proces-tool ' + VERSION + ' (' + BUILD + ')<br>Alle rechten voorbehouden.';
 
 // ---- Editor ----
 let modeler;

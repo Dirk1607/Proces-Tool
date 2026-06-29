@@ -1,0 +1,1043 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TNL Proces-tool</title>
+
+<!-- bpmn-js (editor) -->
+<link rel="stylesheet" href="https://unpkg.com/bpmn-js@17.11.1/dist/assets/diagram-js.css">
+<link rel="stylesheet" href="https://unpkg.com/bpmn-js@17.11.1/dist/assets/bpmn-js.css">
+<link rel="stylesheet" href="https://unpkg.com/bpmn-js@17.11.1/dist/assets/bpmn-font/css/bpmn.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@bpmn-io/properties-panel@3/dist/assets/properties-panel.css">
+<script src="https://unpkg.com/bpmn-js@17.11.1/dist/bpmn-modeler.development.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bpmn-js-properties-panel@5/dist/bpmn-js-properties-panel.umd.js"></script>
+
+<style>
+  :root{ --navy:#1e2a4a; --orange:#e8833a; --border:#dfe3ea; --light:#f5f7fa; --muted:#6b7686; --red:#c0392b; }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; margin:0; font-family:'Segoe UI',system-ui,sans-serif; color:var(--navy); }
+  body{ display:flex; flex-direction:column; overflow:hidden; }
+
+  header{ display:flex; align-items:center; gap:14px; padding:10px 18px; background:#fff; border-bottom:1px solid var(--border); }
+  header h1{ font-size:16px; margin:0; font-weight:800; letter-spacing:.3px; }
+  header h1 small{ font-weight:600; color:var(--muted); font-size:11px; }
+  header .sp{ flex:1; }
+  .btn{ border:1px solid var(--border); background:#fff; color:var(--navy); border-radius:7px; padding:7px 12px; font-size:13px; cursor:pointer; font-family:inherit; }
+  .btn:hover{ background:var(--light); }
+  .btn.primary{ background:var(--navy); color:#fff; border-color:var(--navy); }
+  .btn.primary:hover{ background:#16203a; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+
+  main{ flex:1; display:flex; min-height:0; }
+  aside{ width:340px; flex:none; border-right:1px solid var(--border); background:#fff; display:flex; flex-direction:column; padding:14px; gap:10px; overflow:auto; }
+  aside label{ font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); }
+  aside textarea{ width:100%; min-height:160px; border:1px solid var(--border); border-radius:8px; padding:10px; font-size:13px; font-family:inherit; resize:vertical; line-height:1.45; }
+  aside .hint{ font-size:11.5px; color:var(--muted); line-height:1.5; }
+  .key-row{ display:flex; gap:6px; }
+  .key-row input{ flex:1; border:1px solid var(--border); border-radius:7px; padding:7px 9px; font-size:12px; font-family:inherit; }
+  .status{ font-size:12px; min-height:18px; }
+  .status.err{ color:var(--red); }
+  .status.ok{ color:#2e7d4f; }
+
+  #canvas{ position:absolute; inset:0; background:#fbfcfe; }
+  .canvas-tools{ position:absolute; bottom:14px; left:18px; display:flex; gap:6px; z-index:10; }
+  .wrap-canvas{ position:relative; flex:1; min-width:0; }
+  details summary{ cursor:pointer; font-size:12px; color:var(--muted); }
+  details[open] summary{ margin-bottom:6px; }
+
+  #properties{ width:340px; flex:none; border-left:1px solid var(--border); background:#fff; overflow:auto; }
+  #properties .bio-properties-panel-placeholder{ padding:14px; font-size:12px; color:var(--muted); font-style:italic; }
+  .spin{ display:inline-block; width:13px; height:13px; border:2px solid var(--border); border-top-color:var(--navy); border-radius:50%; animation:s .7s linear infinite; vertical-align:-2px; margin-right:6px; }
+  @keyframes s{ to{ transform:rotate(360deg);} }
+  /* taak waarvan de naam niet "werkwoord + van + …" volgt */
+  .tnl-bad-name .djs-visual > rect{ stroke:var(--orange) !important; stroke-width:2px !important; stroke-dasharray:5 3 !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>TNL Proces-tool <small>· beschrijf → diagram → bijwerken</small></h1>
+  <div class="sp"></div>
+  <button class="btn" id="btn-new">Nieuw</button>
+  <button class="btn" id="btn-open">Openen…</button>
+  <input type="file" id="file-open" accept=".bpmn,.xml" hidden>
+  <button class="btn" id="btn-tidy" title="Herschik het diagram netjes (verse auto-layout)">⤧ Herschik</button>
+  <button class="btn primary" id="btn-save" title="Bewaar rechtstreeks in de gekozen map">💾 Bewaar .bpmn</button>
+  <button class="btn" id="btn-folder" title="Kies/wijzig de map waarin bewaard wordt">📁 Map…</button>
+  <button class="btn" id="btn-svg">Export SVG</button>
+</header>
+
+<main>
+  <aside>
+    <label for="cmd">Opdracht aan Claude</label>
+    <textarea id="cmd" placeholder="Voeg toe .."></textarea>
+    <button class="btn primary" id="btn-run">▶ Uitvoeren (Enter)</button>
+    <div class="status" id="status"></div>
+    <div id="namecheck" class="hint"></div>
+    <div id="legend" class="hint"></div>
+
+    <details>
+      <summary>Anthropic API-sleutel (blijft lokaal)</summary>
+      <div class="key-row" style="margin-top:8px">
+        <input type="password" id="apikey" placeholder="sk-ant-…" autocomplete="off">
+        <button class="btn" id="btn-key">Bewaar</button>
+      </div>
+      <div class="hint" style="margin-top:6px">De sleutel wordt enkel in deze browser bewaard (localStorage) en gaat rechtstreeks naar Anthropic. Hij komt nooit in een bestand of op GitHub. Voor publiek hosten zetten we later een proxy.</div>
+    </details>
+
+    <details id="prefs-box">
+      <summary>Mijn procesvoorkeuren (huisstijl)</summary>
+      <div class="hint" style="margin:6px 0">Beschrijf in gewone taal hoe Claude je processen moet opbouwen. Dit wordt bij elke generatie meegestuurd en blijft lokaal bewaard.</div>
+      <textarea id="style" style="min-height:150px"></textarea>
+      <button class="btn" id="btn-style-reset" style="margin-top:6px">Terug naar standaard</button>
+    </details>
+
+    <div class="hint">
+      Tip: Claude zet je tekst om naar stappen, beslissingen en pijlen in BPMN. Daarna sleep en wijzig je vrij in het diagram. Opslaan = download .bpmn (later in een bibliotheek).
+    </div>
+  </aside>
+
+  <div class="wrap-canvas">
+    <div id="canvas"></div>
+    <div class="canvas-tools">
+      <button class="btn" id="btn-fit">Passend</button>
+      <button class="btn" id="btn-zin">+</button>
+      <button class="btn" id="btn-zuit">−</button>
+    </div>
+  </div>
+
+  <div id="properties"></div>
+</main>
+
+<script type="module">
+import { layoutProcess } from 'https://cdn.jsdelivr.net/npm/bpmn-auto-layout@0.3.0/+esm';
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $('status');
+function setStatus(msg, kind){ statusEl.className = 'status' + (kind ? ' ' + kind : ''); statusEl.innerHTML = msg; }
+
+// ---- Editor ----
+let modeler;
+try {
+  const PP = window.BpmnJSPropertiesPanel;
+  if (!PP) throw new Error('properties-panel UMD niet geladen');
+  const camundaModdle = await fetch('https://cdn.jsdelivr.net/npm/camunda-bpmn-moddle@7/resources/camunda.json').then(r => r.json());
+  modeler = new BpmnJS({
+    container: '#canvas',
+    propertiesPanel: { parent: '#properties' },
+    additionalModules: [
+      PP.BpmnPropertiesPanelModule,
+      PP.BpmnPropertiesProviderModule,
+      PP.CamundaPlatformPropertiesProviderModule
+    ],
+    moddleExtensions: { camunda: camundaModdle }
+  });
+} catch (e) {
+  console.error('Eigenschappen-paneel kon niet laden; kale editor gebruikt.', e);
+  modeler = new BpmnJS({ container: '#canvas' });
+}
+
+const EMPTY = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_1" isExecutable="false">
+    <bpmn:startEvent id="StartEvent_1" name="Start"/>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_1">
+    <bpmndi:BPMNPlane id="Plane_1" bpmnElement="Process_1">
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="160" y="160" width="36" height="36"/>
+      </bpmndi:BPMNShape>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+
+async function importXml(xml){
+  try {
+    await modeler.importXML(xml);
+    colorEvents();
+    colorLanes();
+    validateTaskNames();
+    fitView();
+  } catch (e){
+    console.error(e);
+    setStatus('Diagram kon niet geladen worden: ' + (e.message || e), 'err');
+  }
+}
+
+// Controleer of taaknamen de huisstijl "werkwoord + van + zelfstandig naamwoord" volgen.
+// Markeer afwijkende taken (oranje streepjeskader) en toon ze in het zijpaneel.
+// De infinitief-vorm eindigt in het Nederlands op -en (Opstellen, Versturen, Uitnodigen…).
+const NAME_OK = /^\s*\p{L}+en\s+van\s+\S/iu;
+function validateTaskNames(){
+  let reg, canvas;
+  try { reg = modeler.get('elementRegistry'); canvas = modeler.get('canvas'); } catch(_){ return; }
+  const bad = [];
+  reg.filter(el => el.type === 'bpmn:Task').forEach(el => {
+    const nm = ((el.businessObject && el.businessObject.name) || '').trim();
+    const ok = !nm || NAME_OK.test(nm);   // lege naam (nog niet ingevuld) niet markeren
+    try { if (ok) canvas.removeMarker(el, 'tnl-bad-name'); else { canvas.addMarker(el, 'tnl-bad-name'); bad.push(nm); } } catch(_){}
+  });
+  const el = $('namecheck');
+  if (el){
+    if (bad.length){ el.style.color = 'var(--orange)'; el.innerHTML = '⚠ ' + bad.length + ' ta' + (bad.length === 1 ? 'ak volgt' : 'ken volgen') + ' niet "werkwoord + van + zelfstandig naamwoord": ' + bad.map(esc).join(', '); }
+    else { el.style.color = ''; el.innerHTML = ''; }
+  }
+  return bad;
+}
+
+// Start-events groen, eind-events rood kleuren (zuiver visueel)
+function colorEvents(){
+  try {
+    const reg = modeler.get('elementRegistry');
+    const modeling = modeler.get('modeling');
+    const starts = reg.filter(el => el.type === 'bpmn:StartEvent');
+    const ends = reg.filter(el => el.type === 'bpmn:EndEvent');
+    if (starts.length) modeling.setColor(starts, { fill: '#e6f4ea', stroke: '#2e7d4f' });
+    if (ends.length) modeling.setColor(ends, { fill: '#fdecea', stroke: '#c0392b' });
+  } catch (e){ console.warn('kleuren mislukt', e); }
+}
+
+// Vaste pastelkleuren per laan-positie (eerste laan = altijd dezelfde kleur, enz.)
+const LANE_COLORS = ['#e8f1fb', '#fdefe6', '#e9f7ec', '#f1eafb', '#fbf7e6', '#e6f7f6'];
+function colorLanes(){
+  try {
+    const reg = modeler.get('elementRegistry');
+    const modeling = modeler.get('modeling');
+    const lanes = reg.filter(el => el.type === 'bpmn:Lane').sort((a, b) => a.y - b.y);
+    lanes.forEach((ln, i) => modeling.setColor([ln], { fill: LANE_COLORS[i % LANE_COLORS.length] }));
+  } catch (e){ console.warn('lane-kleur mislukt', e); }
+}
+
+// Taken/gateways kleuren per rol (vaste pastelkleur per rol-index)
+function colorByRole(model){
+  if (!model.lanes || !model.lanes.length) return;
+  try {
+    const idx = {}; model.lanes.forEach((l, i) => idx[String(l).toLowerCase()] = i);
+    const reg = modeler.get('elementRegistry');
+    const modeling = modeler.get('modeling');
+    (model.elements || []).forEach(e => {
+      if (e.type === 'start' || e.type === 'end' || e.type === 'document') return;
+      const li = idx[String(e.lane || '').toLowerCase()];
+      if (li == null) return;
+      const shape = reg.get(san(e.id));
+      if (shape) modeling.setColor([shape], { fill: LANE_COLORS[li % LANE_COLORS.length], stroke: '#7a8699' });
+    });
+  } catch (e){ console.warn('rol-kleur mislukt', e); }
+}
+
+// Legenda rol -> kleur onder de generatieknop
+function renderLegend(model){
+  const el = $('legend'); if (!el) return;
+  if (!model.lanes || !model.lanes.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div style="margin-bottom:3px">Zwembanen:</div>' + model.lanes.map((l, i) =>
+    `<span style="display:inline-flex;align-items:center;gap:5px;margin:0 10px 4px 0">`
+    + `<span style="width:12px;height:12px;border-radius:3px;border:1px solid #cdd4df;background:${LANE_COLORS[i % LANE_COLORS.length]};display:inline-block"></span>`
+    + esc(l) + '</span>'
+  ).join('');
+}
+
+// Echte zwembanen: X-positie van auto-layout hergebruiken, rij (Y) per rol-baan.
+async function buildLanesBpmn(model){
+  const els = model.elements || [];
+  const map = {}; els.forEach(e => map[e.id] = san(e.id));
+  const lanes = (model.lanes && model.lanes.length) ? model.lanes : ['Rol'];
+  const laneIndex = {}; lanes.forEach((l, i) => laneIndex[String(l).toLowerCase()] = i);
+  const laneOf = (e) => { const k = String(e.lane || '').toLowerCase(); return (k in laneIndex) ? laneIndex[k] : 0; };
+  const dims = (t) => (t === 'start' || t === 'end') ? { w: 36, h: 36 } : (t === 'gateway' ? { w: 50, h: 50 } : (t === 'document' ? { w: 36, h: 50 } : { w: 100, h: 80 }));
+  const docSet = new Set(els.filter(e => e.type === 'document').map(e => map[e.id]));
+
+  // pijlen: gewone sequence-flows tussen flow-nodes; associaties (stippellijn) van/naar een document
+  const flows = (model.flows || []).filter(f => map[f.from] && map[f.to])
+    .map((f, i) => ({ id: san('flow_' + (i + 1)), from: map[f.from], to: map[f.to], name: f.name, assoc: docSet.has(map[f.from]) || docSet.has(map[f.to]) }));
+  const seqFlows = flows.filter(f => !f.assoc);
+  const assocFlows = flows.filter(f => f.assoc);
+
+  // 1) X-posities ophalen uit een gewone auto-layout
+  const pos = {};
+  try {
+    const laid = await layoutProcess(buildBpmn(model));
+    const doc = new DOMParser().parseFromString(laid, 'application/xml');
+    const shapes = doc.getElementsByTagName('bpmndi:BPMNShape');
+    for (let i = 0; i < shapes.length; i++){
+      const s = shapes[i], ref = s.getAttribute('bpmnElement');
+      const b = s.getElementsByTagName('dc:Bounds')[0];
+      if (ref && b) pos[ref] = { x: +b.getAttribute('x'), w: +b.getAttribute('width'), h: +b.getAttribute('height') };
+    }
+  } catch (e){ console.warn('layout voor lanes faalde, val terug op kolommen', e); }
+
+  // fallback-kolommen (BFS) als auto-layout x ontbreekt
+  const adj = {}; els.forEach(e => adj[map[e.id]] = []);
+  flows.forEach(f => adj[f.from].push(f.to));
+  const col = {}; const startIds = els.filter(e => e.type === 'start').map(e => map[e.id]);
+  const q = [...startIds]; startIds.forEach(id => col[id] = 0);
+  while (q.length){ const n = q.shift(); (adj[n] || []).forEach(t => { if (col[t] == null){ col[t] = col[n] + 1; q.push(t); } }); }
+  els.forEach(e => { if (col[map[e.id]] == null) col[map[e.id]] = 0; });
+
+  // 2) geo: x uit auto-layout (of kolom), y = laan-band
+  const laneH = 120, poolY = 80, poolX = 60, laneX = 90, laneLabel = 30;
+  const geo = {}; let minX = Infinity;
+  els.forEach(e => {
+    const id = map[e.id], p = pos[id], d = dims(e.type);
+    const x = p ? p.x : (160 + col[id] * 170);
+    geo[id] = { x, w: p ? p.w : d.w, h: p ? p.h : d.h, lane: laneOf(e) };
+    if (x < minX) minX = x;
+  });
+  const offset = isFinite(minX) ? Math.max(0, (laneX + laneLabel + 40) - minX) : 0;
+  els.forEach(e => { geo[map[e.id]].x += offset; });
+
+  // overlap binnen een baan voorkomen (alleen X)
+  lanes.forEach((_, li) => {
+    const ids = els.filter(e => laneOf(e) === li).map(e => map[e.id]).sort((a, b) => geo[a].x - geo[b].x);
+    for (let i = 1; i < ids.length; i++){
+      const prev = geo[ids[i - 1]], cur = geo[ids[i]], gap = 30;
+      if (cur.x < prev.x + prev.w + gap) cur.x = prev.x + prev.w + gap;
+    }
+  });
+
+  // verticale spreiding bij keuze-splitsingen: vertakt een blok naar >=2 doelen in DEZELFDE baan,
+  // dan komen die doelen boven/onder elkaar te staan en wordt die baan navenant hoger.
+  const rowGap = 70;
+  const vOff = {}; els.forEach(e => vOff[map[e.id]] = 0);
+  const fwdBy = {};
+  seqFlows.forEach(f => { const s = geo[f.from], t = geo[f.to]; if (!s || !t) return; if (t.x >= s.x + s.w - 6) (fwdBy[f.from] = fwdBy[f.from] || []).push(f.to); });
+  Object.values(fwdBy).forEach(targets => {
+    const byLane = {};
+    targets.forEach(tid => { (byLane[geo[tid].lane] = byLane[geo[tid].lane] || []).push(tid); });
+    Object.values(byLane).forEach(group => {
+      if (group.length < 2) return;
+      group.sort((a, b) => geo[a].x - geo[b].x);
+      group.forEach((tid, i) => { const o = Math.round((i - (group.length - 1) / 2) * rowGap); if (Math.abs(o) > Math.abs(vOff[tid])) vOff[tid] = o; });
+    });
+  });
+
+  // baan-hoogtes: extra ruimte waar verticaal geoffset is; y per node binnen zijn baan
+  const laneMaxOff = {};
+  els.forEach(e => { const id = map[e.id], li = geo[id].lane, m = Math.abs(vOff[id]); if (m > (laneMaxOff[li] || 0)) laneMaxOff[li] = m; });
+  const laneHeights = lanes.map((_, li) => laneH + 2 * (laneMaxOff[li] || 0));
+  const laneTop = []; { let y = poolY; lanes.forEach((_, li) => { laneTop[li] = y; y += laneHeights[li]; }); }
+  const lanesH = laneHeights.reduce((a, b) => a + b, 0);
+  els.forEach(e => { const id = map[e.id], g = geo[id], li = g.lane; g.y = Math.round(laneTop[li] + laneHeights[li] / 2 - g.h / 2 + vOff[id]); });
+
+  let maxRight = 0; Object.values(geo).forEach(g => { if (g.x + g.w > maxRight) maxRight = g.x + g.w; });
+  // routeer-strook onderaan de laatste baan voor terug-lussen (binnen de pool)
+  const nBack = seqFlows.filter(f => geo[f.from] && geo[f.to] && geo[f.to].x < geo[f.from].x + geo[f.from].w - 6).length;
+  const corr = nBack ? 22 + nBack * 16 : 0;
+  const laneW = (maxRight + 40) - laneX, poolW = 30 + laneW, poolH = lanesH + corr;
+
+  // 3) process-body + laneSet  (documenten = data-objecten, vallen buiten de banen)
+  const inc = {}, outg = {};
+  seqFlows.forEach(f => { (outg[f.from] = outg[f.from] || []).push(f.id); (inc[f.to] = inc[f.to] || []).push(f.id); });
+  let nodesXml = '', dataObjXml = '';
+  els.forEach(e => {
+    const id = map[e.id];
+    const doc = e.doc ? `<bpmn:documentation>${esc(e.doc)}</bpmn:documentation>` : '';
+    if (e.type === 'document'){
+      dataObjXml += `<bpmn:dataObject id="DataObj_${id}"/>`;
+      nodesXml += `<bpmn:dataObjectReference id="${id}" name="${esc(e.name)}" dataObjectRef="DataObj_${id}">${doc}</bpmn:dataObjectReference>`;
+      return;
+    }
+    const io = (inc[id] || []).map(x => `<bpmn:incoming>${x}</bpmn:incoming>`).join('')
+             + (outg[id] || []).map(x => `<bpmn:outgoing>${x}</bpmn:outgoing>`).join('');
+    nodesXml += `<${nodeTag(e.type)} id="${id}" name="${esc(e.name)}">${doc}${io}</${nodeTag(e.type)}>`;
+  });
+  let flowsXml = '';
+  seqFlows.forEach(f => { flowsXml += `<bpmn:sequenceFlow id="${f.id}" sourceRef="${f.from}" targetRef="${f.to}"${f.name ? ` name="${esc(f.name)}"` : ''} />`; });
+  assocFlows.forEach(f => { flowsXml += `<bpmn:association id="${f.id}" sourceRef="${f.from}" targetRef="${f.to}" associationDirection="One" />`; });
+
+  let laneSet = '<bpmn:laneSet id="LaneSet_1">';
+  lanes.forEach((l, i) => {
+    const refs = els.filter(e => laneOf(e) === i && e.type !== 'document').map(e => `<bpmn:flowNodeRef>${map[e.id]}</bpmn:flowNodeRef>`).join('');
+    laneSet += `<bpmn:lane id="Lane_${i}" name="${esc(l)}">${refs}</bpmn:lane>`;
+  });
+  laneSet += '</bpmn:laneSet>';
+
+  // 4) DI
+  let di = `<bpmndi:BPMNShape id="Participant_1_di" bpmnElement="Participant_1" isHorizontal="true"><dc:Bounds x="${poolX}" y="${poolY}" width="${poolW}" height="${poolH}"/></bpmndi:BPMNShape>`;
+  lanes.forEach((l, i) => { const lh = laneHeights[i] + (i === lanes.length - 1 ? corr : 0); di += `<bpmndi:BPMNShape id="Lane_${i}_di" bpmnElement="Lane_${i}" isHorizontal="true"><dc:Bounds x="${laneX}" y="${laneTop[i]}" width="${laneW}" height="${lh}"/></bpmndi:BPMNShape>`; });
+  els.forEach(e => { const id = map[e.id], g = geo[id]; di += `<bpmndi:BPMNShape id="${id}_di" bpmnElement="${id}"><dc:Bounds x="${Math.round(g.x)}" y="${Math.round(g.y)}" width="${g.w}" height="${g.h}"/></bpmndi:BPMNShape>`; });
+  const routes = routeFlows(geo, flows, { corridorTop: poolY + lanesH, laneBottom: id => laneTop[geo[id].lane] + laneHeights[geo[id].lane] });
+  flows.forEach(f => {
+    const wp = routes[f.id];
+    di += `<bpmndi:BPMNEdge id="${f.id}_di" bpmnElement="${f.id}">` + wp.map(p => `<di:waypoint x="${Math.round(p[0])}" y="${Math.round(p[1])}"/>`).join('') + `</bpmndi:BPMNEdge>`;
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:collaboration id="Collab_1">
+    <bpmn:participant id="Participant_1" name="${esc(model.name || 'Proces')}" processRef="Process_1"/>
+  </bpmn:collaboration>
+  <bpmn:process id="Process_1" isExecutable="false">
+    ${laneSet}
+    ${dataObjXml}
+    ${nodesXml}
+    ${flowsXml}
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_1">
+    <bpmndi:BPMNPlane id="Plane_1" bpmnElement="Collab_1">
+      ${di}
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+}
+
+// load last diagram or empty
+importXml(localStorage.getItem('proces.lastXml') || EMPTY);
+
+// autosave on change
+let nameCheckTimer = null;
+modeler.on('commandStack.changed', async () => {
+  try { const { xml } = await modeler.saveXML({ format: true }); localStorage.setItem('proces.lastXml', xml); } catch(_) {}
+  clearTimeout(nameCheckTimer); nameCheckTimer = setTimeout(validateTaskNames, 150);   // taaknamen hercontroleren
+});
+
+// nieuw getekende start-/eind-events meteen kleuren (groen/rood), net als bij het laden
+modeler.on('commandStack.shape.create.postExecuted', (e) => {
+  const shape = e.context && e.context.shape;
+  if (!shape) return;
+  try {
+    const modeling = modeler.get('modeling');
+    if (shape.type === 'bpmn:StartEvent') modeling.setColor([shape], { fill: '#e6f4ea', stroke: '#2e7d4f' });
+    else if (shape.type === 'bpmn:EndEvent') modeling.setColor([shape], { fill: '#fdecea', stroke: '#c0392b' });
+  } catch(_){}
+});
+
+// Het rechter eigenschappen-paneel wordt nu door bpmn-js-properties-panel verzorgd
+// (officieel bpmn.io / Camunda-paneel). Naam + Documentatie + Camunda-velden zitten daarin.
+
+// ---- Toolbar ----
+$('btn-new').addEventListener('click', () => { if (confirm('Nieuw leeg diagram? Niet-bewaarde wijzigingen gaan verloren.')) importXml(EMPTY); });
+$('btn-fit').addEventListener('click', fitView);
+
+// Passend zoomen, maar het diagram wat naar rechts/onder schuiven zodat het
+// startpunt vrij blijft van de zwevende bpmn-gereedschapsbalk (links boven).
+function fitView(){
+  const canvas = modeler.get('canvas');
+  canvas.zoom('fit-viewport', 'auto');
+  // iets uitzoomen rond het midden voor wat marge (en zodat de start niet onder de werkbalk valt)
+  const vb = canvas.viewbox();
+  if (vb && vb.scale) canvas.zoom(vb.scale * 0.9);
+  // schuif het diagram weg van het zwevende gereedschapspalet (links) en de bovenrand
+  canvas.scroll({ dx: 80, dy: 24 });
+}
+$('btn-zin').addEventListener('click', () => modeler.get('zoomScroll').stepZoom(1));
+$('btn-zuit').addEventListener('click', () => modeler.get('zoomScroll').stepZoom(-1));
+
+$('btn-tidy').addEventListener('click', async () => {
+  const m = extractModel();
+  if (!m.elements.length){ setStatus('Niets om te herschikken.', 'err'); return; }
+  setStatus('<span class="spin"></span>Herschikken…');
+  try { await renderModel(m); fitView(); setStatus('Diagram herschikt.', 'ok'); }   // geen prev -> verse auto-layout
+  catch(e){ console.error(e); setStatus('Herschikken mislukt: ' + (e.message || e), 'err'); }
+});
+
+$('btn-open').addEventListener('click', () => $('file-open').click());
+$('file-open').addEventListener('change', (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => importXml(r.result);
+  r.readAsText(f);
+  e.target.value = '';
+});
+
+$('btn-save').addEventListener('click', async () => {
+  const { xml } = await modeler.saveXML({ format: true });
+  await saveToFolder(xml, naam() + '.bpmn', 'application/xml');
+});
+$('btn-folder').addEventListener('click', async () => {
+  const h = await pickFolder();
+  if (h) setStatus('Map gekozen: "' + h.name + '". Bewaren gaat nu rechtstreeks daarheen.', 'ok');
+});
+$('btn-svg').addEventListener('click', async () => {
+  const { svg } = await modeler.saveSVG();
+  await saveToFolder(svg, naam() + '.svg', 'image/svg+xml');
+});
+
+// ---- Rechtstreeks bewaren in een gekozen map (File System Access API, Chrome/Edge) ----
+let dirHandle = null;
+idbGet('proces.dir').then(h => { if (h) dirHandle = h; }).catch(() => {});
+
+function idb(){ return new Promise((res, rej) => { const r = indexedDB.open('proces-tool', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbSet(k, v){ const db = await idb(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); }); }
+async function idbGet(k){ const db = await idb(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readonly'); const rq = t.objectStore('kv').get(k); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); }); }
+
+async function ensurePermission(handle){
+  if (!handle) return false;
+  const opts = { mode: 'readwrite' };
+  if ((await handle.queryPermission(opts)) === 'granted') return true;
+  try { return (await handle.requestPermission(opts)) === 'granted'; } catch(_){ return false; }
+}
+async function pickFolder(){
+  if (!window.showDirectoryPicker){ setStatus('Mappen kiezen werkt enkel in Chrome of Edge; hier wordt gedownload.', 'err'); return null; }
+  try { dirHandle = await window.showDirectoryPicker(); await idbSet('proces.dir', dirHandle); return dirHandle; }
+  catch(_){ return null; }   // gebruiker annuleerde
+}
+async function saveToFolder(data, filename, mime){
+  if (!window.showDirectoryPicker){ download(data, filename, mime); return; }   // andere browsers: download
+  try {
+    if (!dirHandle && !(await pickFolder())) return;
+    if (!(await ensurePermission(dirHandle))){ if (!(await pickFolder()) || !(await ensurePermission(dirHandle))) return; }
+    const fh = await dirHandle.getFileHandle(filename, { create: true });
+    const w = await fh.createWritable();
+    await w.write(data); await w.close();
+    setStatus('Bewaard: ' + filename + ' in map "' + dirHandle.name + '".', 'ok');
+  } catch(e){ console.error(e); setStatus('Bewaren in map mislukt (' + (e.message || e) + ') — gedownload i.p.v.', 'err'); download(data, filename, mime); }
+}
+function naam(){
+  let n = '';
+  try { n = (extractModel().name || '').trim(); } catch(_){}
+  n = n.slice(0, 40).replace(/[^\w\- ]+/g, '').trim();
+  return n || 'proces';
+}
+function download(data, filename, mime){
+  const blob = new Blob([data], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ---- API key ----
+$('apikey').value = localStorage.getItem('proces.key') || '';
+$('btn-key').addEventListener('click', () => {
+  localStorage.setItem('proces.key', $('apikey').value.trim());
+  setStatus('Sleutel bewaard in deze browser.', 'ok');
+});
+
+// ---- Claude generation ----
+// Vaste technische regels (niet bewerkbaar — zorgen dat het diagram klopt)
+const SYSTEM_BASE = `Je bent een proces-analist voor The Next Level. Zet de beschrijving van de gebruiker om naar een gestructureerd bedrijfsproces.
+
+Technische regels (altijd volgen):
+- Eén startEvent en minstens één endEvent.
+- Beslissingen worden een "gateway"; benoem de uitgaande pijlen van een gateway met een korte label (bv. "ja", "nee", of de voorwaarde).
+- Houd id's kort en uniek (bv. e1, t1, g1, end1).
+- Verdeel het proces ALTIJD over zwembanen op basis van wie elke stap uitvoert: vul "lanes" met de geordende lijst rolnamen, en geef elk element (ook start en eind) een "lane" die exact één van die rolnamen is.
+- Zwembanen mogen UITSLUITEND INTERNE functies/rollen van de eigen organisatie zijn (bv. "Boekhouder", "Dossierbeheerder", "Office manager"). NOOIT namen van personen/medewerkers, en NOOIT externe partijen als baan (geen "Klant", "Leverancier", "Boekhoudkantoor", "Derde partij", "Overheid", ...).
+- Schrijf elke taak vanuit het standpunt van de EIGEN medewerker (wat DOET onze medewerker), niet vanuit de externe partij.
+- Een externe partij of extern document komt dus NIET als baan en NIET als taak voor. Een aangeleverd of verstuurd document/gegeven van buitenaf (bv. een saldibalans van de boekhouder) modelleer je als een document-element ("type": "document", "name" = de documentnaam, bv. "Saldibalans") met een pijl NAAR (of VAN) de taak die onze medewerker ermee doet — bv. document "Saldibalans" → taak "Omzetten van de saldibalans naar template". Geef het document de lane van de medewerker die het gebruikt.
+- Zet de rol die het proces START als EERSTE in "lanes" (die komt bovenaan, zodat het proces linksboven begint).
+- Vermijd onnodig heen-en-weer springen tussen banen: ken een stap alleen een andere rol toe als die stap echt door iemand anders wordt uitgevoerd. Hou opeenvolgende stappen van dezelfde rol bij elkaar. Gebruik liever weinig rollen (2 à 3) dan veel.
+- Elk element kan een veld "doc" hebben (extra toelichting van de gebruiker); behoud dat ongewijzigd tenzij de opdracht het expliciet aanpast.
+- Geef enkel het proces terug volgens het opgelegde JSON-schema; geen uitleg.`;
+
+// Bewerkbare voorkeuren van de gebruiker (huisstijl) — standaardwaarde
+const DEFAULT_STYLE = `- Taal: Nederlands.
+- Benoem taken als: werkwoord + van + zelfstandig naamwoord, bv. "Opmaken van het projectplan", "Goedkeuren van de offerte".
+- Detailniveau: gemiddeld — alleen de stappen die er echt toe doen, geen micro-stappen.
+- Start met een duidelijk beginpunt en eindig met een duidelijk eindresultaat.`;
+
+// laad voorkeuren in het veld
+$('style').value = localStorage.getItem('proces.style') || DEFAULT_STYLE;
+$('style').addEventListener('input', () => localStorage.setItem('proces.style', $('style').value));
+$('btn-style-reset').addEventListener('click', () => {
+  $('style').value = DEFAULT_STYLE;
+  localStorage.setItem('proces.style', DEFAULT_STYLE);
+});
+
+const SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['name', 'elements', 'flows'],
+  properties: {
+    name: { type: 'string' },
+    lanes: { type: 'array', items: { type: 'string' } },
+    elements: { type: 'array', items: {
+      type: 'object', additionalProperties: false, required: ['id','type','name'],
+      properties: {
+        id: { type: 'string' },
+        type: { type: 'string', enum: ['start','end','task','gateway','document'] },
+        name: { type: 'string' },
+        lane: { type: 'string' },
+        doc: { type: 'string' }
+      }
+    }},
+    flows: { type: 'array', items: {
+      type: 'object', additionalProperties: false, required: ['from','to'],
+      properties: { from: { type: 'string' }, to: { type: 'string' }, name: { type: 'string' } }
+    }}
+  }
+};
+
+$('btn-run').addEventListener('click', runCommand);
+$('cmd').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); runCommand(); }
+});
+
+let lastModel = null;
+
+async function callClaude(userText){
+  const key = (localStorage.getItem('proces.key') || $('apikey').value).trim();
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-4-8',
+      max_tokens: 4000,
+      system: SYSTEM_BASE + '\n\nVoorkeuren van de gebruiker (huisstijl):\n' + (($('style').value || DEFAULT_STYLE).trim()),
+      output_config: { format: { type: 'json_schema', schema: SCHEMA } },
+      messages: [{ role: 'user', content: userText }]
+    })
+  });
+  if (!resp.ok){ const t = await resp.text(); throw new Error('API ' + resp.status + ': ' + t.slice(0, 300)); }
+  const data = await resp.json();
+  const block = (data.content || []).find(b => b.type === 'text');
+  return JSON.parse(block.text);
+}
+
+async function renderModel(model, prev){
+  let xml;
+  if (model.lanes && model.lanes.length) {
+    if (prev && prev.pool && Object.keys(prev.nodes).length) {
+      xml = buildLanesBpmnPreserving(model, prev);   // aanpassing: posities behouden
+    } else {
+      xml = await buildLanesBpmn(model);             // nieuwe bouw: auto-layout
+    }
+  } else {
+    const semantic = buildBpmn(model);
+    try { xml = await layoutProcess(semantic); }
+    catch(e){ console.warn('auto-layout faalde, ruwe import', e); xml = semantic; }
+  }
+  await importXml(xml);
+  renderLegend(model);
+  lastModel = model;
+}
+
+// Het HUIDIGE diagram (handmatig + AI) terug uitlezen naar ons eenvoudige model
+function extractModel(){
+  const reg = modeler.get('elementRegistry');
+  const all = reg.getAll();
+  const skip = new Set(['bpmn:SequenceFlow','bpmn:Association','bpmn:DataObject','bpmn:Lane','bpmn:LaneSet','bpmn:Participant','bpmn:Collaboration','bpmn:Process','label']);
+  const typeOf = (t) => (t === 'bpmn:StartEvent') ? 'start'
+                      : (t === 'bpmn:EndEvent') ? 'end'
+                      : (t === 'bpmn:DataObjectReference') ? 'document'
+                      : (t && t.indexOf('Gateway') >= 0) ? 'gateway' : 'task';
+
+  const laneEls = all.filter(e => e.type === 'bpmn:Lane').sort((a, b) => (a.y || 0) - (b.y || 0));
+  const lanes = laneEls.map(l => (l.businessObject && l.businessObject.name) || '').filter(n => n !== '');
+  const laneOfId = {};
+  laneEls.forEach(l => {
+    const nm = (l.businessObject && l.businessObject.name) || '';
+    ((l.businessObject && l.businessObject.flowNodeRef) || []).forEach(r => { if (r && r.id) laneOfId[r.id] = nm; });
+  });
+  const laneByGeom = (el) => {
+    for (const l of laneEls){ if (el.x >= l.x && el.x <= l.x + l.width && el.y >= l.y - 5 && el.y <= l.y + l.height + 5) return (l.businessObject && l.businessObject.name) || ''; }
+    return '';
+  };
+
+  const elements = [], idset = new Set();
+  all.forEach(el => {
+    const t = el.type;
+    if (!t || !t.startsWith('bpmn:') || skip.has(t) || el.waypoints) return;
+    if (!el.id) return;
+    idset.add(el.id);
+    const bo = el.businessObject || {};
+    const doc = (bo.documentation && bo.documentation[0] && bo.documentation[0].text) || '';
+    elements.push({ id: el.id, type: typeOf(t), name: bo.name || '', lane: laneOfId[el.id] || laneByGeom(el), doc });
+  });
+  const flows = [];
+  all.forEach(el => {
+    if ((el.type === 'bpmn:SequenceFlow' || el.type === 'bpmn:Association') && el.businessObject){
+      const s = el.businessObject.sourceRef, tg = el.businessObject.targetRef;
+      if (s && tg && idset.has(s.id) && idset.has(tg.id)) flows.push({ from: s.id, to: tg.id, name: el.businessObject.name || '' });
+    }
+  });
+  let name = 'Proces';
+  const part = all.find(e => e.type === 'bpmn:Participant');
+  if (part && part.businessObject && part.businessObject.name) name = part.businessObject.name;
+  return { name, lanes, elements, flows };
+}
+
+// Huidige posities (incl. handmatige verplaatsingen) vastleggen om ze te behouden
+function captureGeometry(){
+  const reg = modeler.get('elementRegistry');
+  const nodes = {}, lanes = {}, edges = {}; let pool = null;
+  reg.getAll().forEach(el => {
+    if (el.waypoints){
+      const bo = el.businessObject;
+      if (bo && bo.sourceRef && bo.targetRef) edges[bo.sourceRef.id + '->' + bo.targetRef.id] = el.waypoints.map(p => ({ x: p.x, y: p.y }));
+      return;
+    }
+    if (!el.type) return;
+    if (el.type === 'bpmn:Lane'){ lanes[(el.businessObject && el.businessObject.name) || el.id] = { x: el.x, y: el.y, width: el.width, height: el.height }; }
+    else if (el.type === 'bpmn:Participant'){ pool = { x: el.x, y: el.y, width: el.width, height: el.height }; }
+    else if (el.id && el.type.startsWith('bpmn:') && el.x != null && el.type !== 'bpmn:Process' && el.type !== 'bpmn:Collaboration'){ nodes[el.id] = { x: el.x, y: el.y, width: el.width, height: el.height }; }
+  });
+  return { nodes, lanes, pool, edges };
+}
+
+// Lane-diagram bouwen met BEHOUD van bestaande posities; alleen nieuwe stappen plaatsen
+function buildLanesBpmnPreserving(model, prev){
+  const els = model.elements || [];
+  const map = {}; els.forEach(e => map[e.id] = san(e.id));
+  const lanes = (model.lanes && model.lanes.length) ? model.lanes : ['Rol'];
+  const laneIndex = {}; lanes.forEach((l, i) => laneIndex[String(l).toLowerCase()] = i);
+  const laneOf = (e) => { const k = String(e.lane || '').toLowerCase(); return (k in laneIndex) ? laneIndex[k] : 0; };
+  const dims = (t) => (t === 'start' || t === 'end') ? { w: 36, h: 36 } : (t === 'gateway' ? { w: 50, h: 50 } : { w: 100, h: 80 });
+  const flows = (model.flows || []).filter(f => map[f.from] && map[f.to]).map((f, i) => ({ id: san('flow_' + (i + 1)), from: map[f.from], to: map[f.to], name: f.name }));
+
+  const gap = 40, laneH = 120;
+  const poolX = prev.pool ? prev.pool.x : 60;
+  const poolY = prev.pool ? prev.pool.y : 80;
+  const laneXpos = poolX + 30;
+
+  // lane-banden: bestaande y/hoogte behouden, nieuwe eronder stapelen
+  const prevLanes = prev.lanes || {};
+  let maxBottom = poolY; Object.values(prevLanes).forEach(b => { if (b.y + b.height > maxBottom) maxBottom = b.y + b.height; });
+  const band = {};
+  lanes.forEach((name, i) => { const p = prevLanes[name]; if (p){ band[i] = { y: p.y, height: p.height }; } else { band[i] = { y: maxBottom, height: laneH }; maxBottom += laneH; } });
+  const laneCenterY = (e) => { const b = band[laneOf(e)]; return b.y + b.height / 2; };
+
+  // geometrie: bestaande posities behouden, nieuwe markeren
+  const geo = {}, isNew = {};
+  els.forEach(e => { const id = map[e.id], d = dims(e.type), p = prev.nodes[id];
+    if (p){ geo[id] = { x: p.x, y: p.y, w: p.width, h: p.height }; isNew[id] = false; }
+    else { geo[id] = { x: null, y: null, w: d.w, h: d.h }; isNew[id] = true; } });
+
+  const inMap = {}, outMap = {};
+  flows.forEach(f => { (outMap[f.from] = outMap[f.from] || []).push(f.to); (inMap[f.to] = inMap[f.to] || []).push(f.from); });
+
+  // rij-hoogte per baan op basis van de BESTAANDE stappen (zodat nieuwe stappen exact uitlijnen)
+  const rowCenter = {};
+  els.forEach(e => { const id = map[e.id]; if (isNew[id]) return; const li = laneOf(e); if (rowCenter[li] == null) rowCenter[li] = geo[id].y + geo[id].h / 2; });
+
+  // nieuwe stappen plaatsen TUSSEN voor- en opvolger; bestaande blokjes blijven exact staan (geen opschuiven)
+  els.forEach(e => { const id = map[e.id]; if (!isNew[id]) return; const g = geo[id];
+    const pred = (inMap[id] || []).map(p => geo[p]).find(x => x && x.x != null);
+    const succ = (outMap[id] || []).map(s => geo[s]).find(x => x && x.x != null);
+    if (pred && succ){
+      const ruimte = succ.x - (pred.x + pred.w);
+      g.x = (ruimte >= g.w + 20) ? Math.round((pred.x + pred.w + succ.x) / 2 - g.w / 2) : (pred.x + pred.w + gap);
+    } else if (pred){ g.x = pred.x + pred.w + gap; }
+    else if (succ){ g.x = Math.max(laneXpos + 40, succ.x - g.w - gap); }
+    else { g.x = laneXpos + 40; }
+    const li = laneOf(e);
+    const cy = (rowCenter[li] != null) ? rowCenter[li] : laneCenterY(e);
+    g.y = Math.round(cy - g.h / 2);
+  });
+
+  // afmetingen
+  let maxRight = laneXpos + 200; Object.values(geo).forEach(g => { if (g.x != null && g.x + g.w > maxRight) maxRight = g.x + g.w; });
+  const laneW = (maxRight + 40) - laneXpos, poolW = 30 + laneW;
+  // routeer-strook in de ONDERSTE baan voor NIEUWE terug-lussen (bestaande pijlen houden hun route)
+  const prevEdgesPre = prev.edges || {};
+  let lowestIdx = 0; for (let i = 1; i < lanes.length; i++) if (band[i].y > band[lowestIdx].y) lowestIdx = i;
+  const isNewBack = (f) => { const r = prevEdgesPre[f.from + '->' + f.to]; if (r && r.length >= 2) return false; const s = geo[f.from], t = geo[f.to]; return s && t && s.x != null && t.x != null && t.x < s.x + s.w - 6; };
+  const nNewBack = flows.filter(isNewBack).length;
+  const corr = nNewBack ? 22 + nNewBack * 16 : 0;
+  const lowBand = band[lowestIdx];
+  const corridorTop = lowBand.y + lowBand.height;          // onderrand laagste baan vóór de strook
+  if (corr) lowBand.height += corr;
+  let poolBottom = poolY; lanes.forEach((_, i) => { const b = band[i]; if (b.y + b.height > poolBottom) poolBottom = b.y + b.height; });
+  const poolH = poolBottom - poolY;
+
+  const inc = {}, outg = {};
+  flows.forEach(f => { (outg[f.from] = outg[f.from] || []).push(f.id); (inc[f.to] = inc[f.to] || []).push(f.id); });
+  let nodesXml = '';
+  els.forEach(e => { const id = map[e.id];
+    const io = (inc[id] || []).map(x => `<bpmn:incoming>${x}</bpmn:incoming>`).join('') + (outg[id] || []).map(x => `<bpmn:outgoing>${x}</bpmn:outgoing>`).join('');
+    const doc = e.doc ? `<bpmn:documentation>${esc(e.doc)}</bpmn:documentation>` : '';
+    nodesXml += `<${nodeTag(e.type)} id="${id}" name="${esc(e.name)}">${doc}${io}</${nodeTag(e.type)}>`;
+  });
+  let flowsXml = '';
+  flows.forEach(f => { flowsXml += `<bpmn:sequenceFlow id="${f.id}" sourceRef="${f.from}" targetRef="${f.to}"${f.name ? ` name="${esc(f.name)}"` : ''} />`; });
+
+  let laneSet = '<bpmn:laneSet id="LaneSet_1">';
+  lanes.forEach((l, i) => { const refs = els.filter(e => laneOf(e) === i).map(e => `<bpmn:flowNodeRef>${map[e.id]}</bpmn:flowNodeRef>`).join(''); laneSet += `<bpmn:lane id="Lane_${i}" name="${esc(l)}">${refs}</bpmn:lane>`; });
+  laneSet += '</bpmn:laneSet>';
+
+  let di = `<bpmndi:BPMNShape id="Participant_1_di" bpmnElement="Participant_1" isHorizontal="true"><dc:Bounds x="${poolX}" y="${poolY}" width="${Math.round(poolW)}" height="${Math.round(poolH)}"/></bpmndi:BPMNShape>`;
+  lanes.forEach((l, i) => { const b = band[i]; di += `<bpmndi:BPMNShape id="Lane_${i}_di" bpmnElement="Lane_${i}" isHorizontal="true"><dc:Bounds x="${laneXpos}" y="${b.y}" width="${Math.round(laneW)}" height="${b.height}"/></bpmndi:BPMNShape>`; });
+  els.forEach(e => { const id = map[e.id], g = geo[id]; di += `<bpmndi:BPMNShape id="${id}_di" bpmnElement="${id}"><dc:Bounds x="${Math.round(g.x)}" y="${Math.round(g.y)}" width="${g.w}" height="${g.h}"/></bpmndi:BPMNShape>`; });
+  const sanLane = {}; els.forEach(e => sanLane[map[e.id]] = laneOf(e));
+  const routes = routeFlows(geo, flows, { corridorTop, laneBottom: id => { const b = band[sanLane[id] || 0]; return b ? Math.min(b.y + b.height, corridorTop) : geo[id].y + geo[id].h + 40; } });
+  flows.forEach(f => {
+    const reuse = prevEdgesPre[f.from + '->' + f.to];   // bestaande pijl-route behouden
+    const wp = (reuse && reuse.length >= 2) ? reuse.map(p => [p.x, p.y]) : routes[f.id];
+    di += `<bpmndi:BPMNEdge id="${f.id}_di" bpmnElement="${f.id}">` + wp.map(p => `<di:waypoint x="${Math.round(p[0])}" y="${Math.round(p[1])}"/>`).join('') + `</bpmndi:BPMNEdge>`;
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:collaboration id="Collab_1">
+    <bpmn:participant id="Participant_1" name="${esc(model.name || 'Proces')}" processRef="Process_1"/>
+  </bpmn:collaboration>
+  <bpmn:process id="Process_1" isExecutable="false">
+    ${laneSet}
+    ${nodesXml}
+    ${flowsXml}
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_1">
+    <bpmndi:BPMNPlane id="Plane_1" bpmnElement="Collab_1">
+      ${di}
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+}
+
+async function runCommand(){
+  const key = (localStorage.getItem('proces.key') || $('apikey').value).trim();
+  const instr = $('cmd').value.trim();
+  if (!key){ setStatus('Geef eerst je Anthropic-sleutel op (klap "API-sleutel" open).', 'err'); return; }
+  if (!instr){ setStatus('Typ een opdracht en druk op Enter.', 'err'); return; }
+
+  const current = extractModel();
+  const heeftProces = current.elements.filter(e => e.type !== 'start').length > 0;
+
+  // selectie meegeven zodat "de aangeduide / deze stap" werkt
+  let picked = [];
+  try {
+    const ids = new Set(current.elements.map(e => e.id));
+    picked = modeler.get('selection').get().filter(s => ids.has(s.id))
+      .map(s => { const bo = s.businessObject || {}; return { id: s.id, name: bo.name || '' }; });
+  } catch(_){}
+  const refersToSelection = /aangeduid|geselecteer|\bdeze\b|\bdit\b/i.test(instr);
+  if (heeftProces && refersToSelection && !picked.length){
+    setStatus('Klik eerst de bedoelde stap aan in het diagram (hij krijgt een blauw kader), en druk dan op Enter.', 'err');
+    return;
+  }
+  const selInfo = picked.length
+    ? '\n\nGeselecteerde stap(pen) (bedoeld met "de aangeduide", "deze", "de geselecteerde"): '
+      + picked.map(p => (p.name ? '"' + p.name + '"' : '') + ' [id ' + p.id + ']').join('; ') + '.'
+    : '';
+
+  $('btn-run').disabled = true;
+  setStatus('<span class="spin"></span>' + (heeftProces ? ('Aanpassen — ' + current.elements.length + ' stappen…') : 'Proces bouwen…'));
+  try {
+    const userText = heeftProces
+      ? 'Dit is het HUIDIGE proces als JSON (de actuele toestand, inclusief handmatige wijzigingen). '
+        + 'Herschrijf het NIET vanaf nul, verzin GEEN andere stappen of rollen, en behoud de bestaande "id", "name" en "lane" van elke stap EXACT. '
+        + 'Gebruik enkel nieuwe id\'s voor stappen die je echt toevoegt. '
+        + 'Voer enkel de onderstaande opdracht door en laat de rest ongemoeid.\n\n'
+        + JSON.stringify(current) + selInfo
+        + '\n\nOpdracht: ' + instr
+        + '\n\nGeef het VOLLEDIGE aangepaste proces terug volgens hetzelfde schema.'
+      : 'Bouw een nieuw proces volgens deze beschrijving en geef het terug volgens het schema:\n\n' + instr;
+    const model = await callClaude(userText);
+    await renderModel(model);   // altijd verse, voorspelbare auto-layout
+    $('cmd').value = '';
+    setStatus(heeftProces
+      ? 'Aangepast (' + (model.elements||[]).length + ' stappen). Volgende opdracht?'
+      : 'Gebouwd (' + (model.elements||[]).length + ' stappen). Verfijn gerust, of Download om te bewaren.', 'ok');
+  } catch (e){ console.error(e); setStatus('Mislukt: ' + (e.message || e), 'err'); }
+  finally { $('btn-run').disabled = false; }
+}
+
+// ---- JSON model -> semantic BPMN XML (no DI; auto-layout adds coordinates) ----
+function san(id){ let s = String(id).replace(/[^A-Za-z0-9_-]/g,'_'); if (!/^[A-Za-z_]/.test(s)) s = 'n_' + s; return s; }
+function esc(t){ return String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function buildBpmn(model){
+  const map = {};
+  (model.elements || []).forEach(e => { map[e.id] = san(e.id); });
+
+  const flows = (model.flows || [])
+    .filter(f => map[f.from] && map[f.to])
+    .map((f, i) => ({ id: san('flow_' + (i + 1)), from: map[f.from], to: map[f.to], name: f.name }));
+
+  const inc = {}, out = {};
+  flows.forEach(f => { (out[f.from] = out[f.from] || []).push(f.id); (inc[f.to] = inc[f.to] || []).push(f.id); });
+
+  let body = '';
+  (model.elements || []).forEach(e => {
+    const id = map[e.id], name = esc(e.name);
+    const io = (inc[id] || []).map(x => `<bpmn:incoming>${x}</bpmn:incoming>`).join('')
+             + (out[id] || []).map(x => `<bpmn:outgoing>${x}</bpmn:outgoing>`).join('');
+    let tag = 'bpmn:task';
+    if (e.type === 'start') tag = 'bpmn:startEvent';
+    else if (e.type === 'end') tag = 'bpmn:endEvent';
+    else if (e.type === 'gateway') tag = 'bpmn:exclusiveGateway';
+    const doc = e.doc ? `<bpmn:documentation>${esc(e.doc)}</bpmn:documentation>` : '';
+    body += `<${tag} id="${id}" name="${name}">${doc}${io}</${tag}>`;
+  });
+  flows.forEach(f => {
+    body += `<bpmn:sequenceFlow id="${f.id}" sourceRef="${f.from}" targetRef="${f.to}"${f.name ? ` name="${esc(f.name)}"` : ''} />`;
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_1" isExecutable="false">${body}</bpmn:process>
+</bpmn:definitions>`;
+}
+
+// ---- Zwembaan-variant: eigen lay-out met lanes (auto-layout ondersteunt geen lanes) ----
+function nodeDims(type){
+  if (type === 'start' || type === 'end') return { w: 36, h: 36 };
+  if (type === 'gateway') return { w: 50, h: 50 };
+  return { w: 100, h: 80 };
+}
+function nodeTag(type){
+  if (type === 'start') return 'bpmn:startEvent';
+  if (type === 'end') return 'bpmn:endEvent';
+  if (type === 'gateway') return 'bpmn:exclusiveGateway';
+  return 'bpmn:task';
+}
+
+// Routeer ALLE pijlen samen -> { flowId: [[x,y],...] }.
+//  - vooruit + zelfde rij  -> rechte horizontale lijn
+//  - vooruit + andere baan -> trap: rechts uit, verticaal, links in
+//  - achteruit (lus)       -> kanaal net onder de laagste baan van bron/doel (kort, binnen de pool)
+//  - meerdere pijlen uit/naar één blok (bv. gateway ja/nee) -> vertrek/aankomst in hoogte gespreid
+// Zoek een x dicht bij desiredX waar een verticale lijn over [y1,y2] geen enkel blok raakt.
+function clearVerticalX(rects, desiredX, y1, y2, pad){
+  const lo = Math.min(y1, y2) - 2, hi = Math.max(y1, y2) + 2;
+  const bands = rects.filter(n => (n.y - pad) < hi && (n.y + n.h + pad) > lo).map(n => [n.x - pad, n.x + n.w + pad]);
+  const ok = x => bands.every(b => x < b[0] || x > b[1]);
+  if (ok(desiredX)) return desiredX;
+  for (let d = 6; d <= 600; d += 6){ if (ok(desiredX - d)) return desiredX - d; if (ok(desiredX + d)) return desiredX + d; }
+  return desiredX;
+}
+
+// geo: { id: { x, y, w, h } }.  opt: { corridorTop, laneBottom(id) }
+function routeFlows(geo, flows, opt){
+  const { corridorTop } = opt;
+  const laneBottom = opt.laneBottom || (id => geo[id].y + geo[id].h + 40);
+  const rects = Object.values(geo).filter(g => g && g.x != null);
+  const has = f => geo[f.from] && geo[f.to] && geo[f.from].x != null && geo[f.to].x != null;
+  const isBack = f => has(f) && geo[f.to].x < geo[f.from].x + geo[f.from].w - 6;
+
+  // groepeer voor spreiding: forward-pijlen per bron, en alle inkomende per doel
+  const bySrc = {}, byTgt = {};
+  flows.forEach(f => { if (!has(f)) return;
+    if (!isBack(f)) (bySrc[f.from] = bySrc[f.from] || []).push(f);
+    (byTgt[f.to] = byTgt[f.to] || []).push(f);
+  });
+  Object.values(bySrc).forEach(L => L.sort((a, b) => (geo[a.to].y - geo[b.to].y) || (geo[a.to].x - geo[b.to].x)));
+  Object.values(byTgt).forEach(L => L.sort((a, b) => (geo[a.from].y - geo[b.from].y) || (geo[a.from].x - geo[b.from].x)));
+  const off = (i, n, step, max) => n <= 1 ? 0 : Math.max(-max, Math.min(max, (i - (n - 1) / 2) * step));
+
+  let backDown = 0;
+  const res = {};
+  flows.forEach(f => {
+    if (!has(f)) { res[f.id] = [[0, 0], [0, 0]]; return; }
+    const s = geo[f.from], t = geo[f.to], back = isBack(f);
+    const srcL = bySrc[f.from], sN = srcL ? srcL.length : 1, sI = srcL ? srcL.indexOf(f) : 0;
+    const tgtL = byTgt[f.to],   tN = tgtL ? tgtL.length : 1, tI = tgtL ? tgtL.indexOf(f) : 0;
+    const sy = Math.round(s.y + s.h / 2 + (back ? 0 : off(sI, sN, 14, s.h / 2 - 4)));
+    const ty = Math.round(t.y + t.h / 2 + off(tI, tN, 14, t.h / 2 - 4));
+
+    if (!back){
+      const sRight = s.x + s.w, tLeft = t.x;
+      if (Math.abs(sy - ty) < 3) res[f.id] = [[sRight, sy], [tLeft, sy]];
+      else { const mx = Math.round((sRight + tLeft) / 2); res[f.id] = [[sRight, sy], [mx, sy], [mx, ty], [tLeft, ty]]; }
+      return;
+    }
+    // achterwaartse lus: onder de blokken door via VRIJE kolommen; horizontale stukjes net
+    // onder de banen (onder de blok-rij). Verticale stukken zoeken een vrije x -> raakt niets.
+    const chY = corridorTop + 12 + (backDown++) * 16;
+    const scx = Math.round(s.x + s.w / 2), tcx = Math.round(t.x + t.w / 2);
+    const sJogY = Math.round(laneBottom(f.from) - 8);   // net onder de blok-rij van de bron
+    const tJogY = Math.round(laneBottom(f.to) - 8);     // net onder de blok-rij van het doel
+    const dropX = Math.round(clearVerticalX(rects, s.x - 18, sJogY, chY, 8));
+    const riseX = Math.round(clearVerticalX(rects, t.x - 18, tJogY, chY, 8));
+    res[f.id] = [[scx, s.y + s.h], [scx, sJogY], [dropX, sJogY], [dropX, chY], [riseX, chY], [riseX, tJogY], [tcx, tJogY], [tcx, t.y + t.h]];
+  });
+  return res;
+}
+
+function buildSwimlaneBpmn(model){
+  const els = model.elements || [];
+  const map = {}; els.forEach(e => map[e.id] = san(e.id));
+  const lanes = (model.lanes && model.lanes.length) ? model.lanes : ['Rol'];
+  const laneIndex = {}; lanes.forEach((l, i) => laneIndex[String(l).toLowerCase()] = i);
+  const laneOf = (e) => { const k = String(e.lane || '').toLowerCase(); return (k in laneIndex) ? laneIndex[k] : 0; };
+
+  const flows = (model.flows || []).filter(f => map[f.from] && map[f.to])
+    .map((f, i) => ({ id: san('flow_' + (i + 1)), from: map[f.from], to: map[f.to], name: f.name }));
+
+  const out = {}; els.forEach(e => out[map[e.id]] = []);
+  flows.forEach(f => out[f.from].push(f.to));
+
+  // kolom = BFS-diepte vanaf start-events (negeert terugkoppellussen netjes)
+  const col = {};
+  const startIds = els.filter(e => e.type === 'start').map(e => map[e.id]);
+  const q = [...startIds]; startIds.forEach(id => col[id] = 0);
+  while (q.length){ const n = q.shift(); (out[n] || []).forEach(t => { if (col[t] == null){ col[t] = col[n] + 1; q.push(t); } }); }
+  els.forEach(e => { if (col[map[e.id]] == null) col[map[e.id]] = 0; });
+
+  const poolX = 140, poolY = 80, labelPool = 30, laneLabel = 30, marginX = 30, colGap = 170, laneH = 110;
+
+  // botsingen oplossen: per (laan, kolom) maar één node
+  const used = new Set(), place = {};
+  [...els].sort((a, b) => (col[map[a.id]] - col[map[b.id]]) || (laneOf(a) - laneOf(b))).forEach(e => {
+    const id = map[e.id]; let c = col[id]; const li = laneOf(e);
+    while (used.has(li + '|' + c)) c++;
+    used.add(li + '|' + c);
+    place[id] = { col: c, laneIdx: li };
+  });
+  let maxCol = 0; Object.values(place).forEach(p => { if (p.col > maxCol) maxCol = p.col; });
+
+  const xBase = poolX + labelPool + laneLabel + marginX;
+  const laneW = (maxCol + 1) * colGap + 120;
+  const laneX = poolX + labelPool;
+  const poolW = labelPool + laneW;
+  const poolH = lanes.length * laneH;
+
+  const xy = {};
+  els.forEach(e => {
+    const id = map[e.id], p = place[id], d = nodeDims(e.type);
+    const cellCenterX = xBase + p.col * colGap + 50;
+    const laneTop = poolY + p.laneIdx * laneH;
+    xy[id] = { x: Math.round(cellCenterX - d.w / 2), y: Math.round(laneTop + laneH / 2 - d.h / 2), w: d.w, h: d.h };
+  });
+
+  const inc = {}, outg = {};
+  flows.forEach(f => { (outg[f.from] = outg[f.from] || []).push(f.id); (inc[f.to] = inc[f.to] || []).push(f.id); });
+
+  let nodesXml = '';
+  els.forEach(e => {
+    const id = map[e.id];
+    const io = (inc[id] || []).map(x => `<bpmn:incoming>${x}</bpmn:incoming>`).join('')
+             + (outg[id] || []).map(x => `<bpmn:outgoing>${x}</bpmn:outgoing>`).join('');
+    const doc = e.doc ? `<bpmn:documentation>${esc(e.doc)}</bpmn:documentation>` : '';
+    nodesXml += `<${nodeTag(e.type)} id="${id}" name="${esc(e.name)}">${doc}${io}</${nodeTag(e.type)}>`;
+  });
+
+  let flowsXml = '';
+  flows.forEach(f => { flowsXml += `<bpmn:sequenceFlow id="${f.id}" sourceRef="${f.from}" targetRef="${f.to}"${f.name ? ` name="${esc(f.name)}"` : ''} />`; });
+
+  let laneSet = '<bpmn:laneSet id="LaneSet_1">';
+  lanes.forEach((l, i) => {
+    const refs = els.filter(e => laneOf(e) === i).map(e => `<bpmn:flowNodeRef>${map[e.id]}</bpmn:flowNodeRef>`).join('');
+    laneSet += `<bpmn:lane id="Lane_${i}" name="${esc(l)}">${refs}</bpmn:lane>`;
+  });
+  laneSet += '</bpmn:laneSet>';
+
+  let di = `<bpmndi:BPMNShape id="Participant_1_di" bpmnElement="Participant_1" isHorizontal="true"><dc:Bounds x="${poolX}" y="${poolY}" width="${poolW}" height="${poolH}"/></bpmndi:BPMNShape>`;
+  lanes.forEach((l, i) => {
+    di += `<bpmndi:BPMNShape id="Lane_${i}_di" bpmnElement="Lane_${i}" isHorizontal="true"><dc:Bounds x="${laneX}" y="${poolY + i * laneH}" width="${laneW}" height="${laneH}"/></bpmndi:BPMNShape>`;
+  });
+  els.forEach(e => {
+    const id = map[e.id], b = xy[id];
+    di += `<bpmndi:BPMNShape id="${id}_di" bpmnElement="${id}"><dc:Bounds x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}"/></bpmndi:BPMNShape>`;
+  });
+  flows.forEach(f => {
+    const s = xy[f.from], t = xy[f.to];
+    const x1 = s.x + s.w, y1 = Math.round(s.y + s.h / 2), x2 = t.x, y2 = Math.round(t.y + t.h / 2);
+    di += `<bpmndi:BPMNEdge id="${f.id}_di" bpmnElement="${f.id}"><di:waypoint x="${x1}" y="${y1}"/><di:waypoint x="${x2}" y="${y2}"/></bpmndi:BPMNEdge>`;
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:collaboration id="Collab_1">
+    <bpmn:participant id="Participant_1" name="${esc(model.name || 'Proces')}" processRef="Process_1"/>
+  </bpmn:collaboration>
+  <bpmn:process id="Process_1" isExecutable="false">
+    ${laneSet}
+    ${nodesXml}
+    ${flowsXml}
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_1">
+    <bpmndi:BPMNPlane id="Plane_1" bpmnElement="Collab_1">
+      ${di}
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+}
+</script>
+</body>
+</html>

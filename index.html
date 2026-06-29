@@ -63,8 +63,8 @@
   <button class="btn" id="btn-open">Openen…</button>
   <input type="file" id="file-open" accept=".bpmn,.xml" hidden>
   <button class="btn" id="btn-tidy" title="Herschik het diagram netjes (verse auto-layout)">⤧ Herschik</button>
-  <button class="btn primary" id="btn-save" title="Bewaar rechtstreeks in de gekozen map">💾 Bewaar .bpmn</button>
-  <button class="btn" id="btn-folder" title="Kies/wijzig de map waarin bewaard wordt">📁 Map…</button>
+  <button class="btn primary" id="btn-save" title="Opslaan naar het huidige bestand">💾 Opslaan</button>
+  <button class="btn" id="btn-saveas" title="Opslaan als… (nieuwe locatie/naam kiezen)">Opslaan als…</button>
   <button class="btn" id="btn-svg">Export SVG</button>
 </header>
 
@@ -87,7 +87,7 @@
     </details>
 
     <div class="hint">
-      Tip: Claude zet je tekst om naar stappen, beslissingen en pijlen in BPMN. Daarna sleep en wijzig je vrij in het diagram. Opslaan = bewaren in je gekozen map (.bpmn).
+      Tip: Claude zet je tekst om naar stappen, beslissingen en pijlen in BPMN. Daarna sleep en wijzig je vrij in het diagram. Opslaan = schrijven naar je .bpmn-bestand ("Opslaan als…" om een nieuwe locatie/naam te kiezen).
     </div>
     <div class="sp" style="flex:1"></div>
     <div class="hint" id="copyright" style="border-top:1px solid var(--border);padding-top:8px;font-size:11px"></div>
@@ -113,7 +113,7 @@ const statusEl = $('status');
 function setStatus(msg, kind){ statusEl.className = 'status' + (kind ? ' ' + kind : ''); statusEl.innerHTML = msg; }
 
 // Versie — hoog deze op bij elke deploy, zo zie je meteen of de juiste build live staat.
-const VERSION = 'v1.4';
+const VERSION = 'v1.5';
 const BUILD = '2026-06-29';
 if ($('copyright')) $('copyright').innerHTML = '© ' + new Date().getFullYear() + ' The Next Level · Proces-tool ' + VERSION + ' (' + BUILD + ')<br>Alle rechten voorbehouden.';
 
@@ -447,16 +447,15 @@ $('file-open').addEventListener('change', (e) => {
   e.target.value = '';
 });
 
-$('btn-save').addEventListener('click', () => saveToFolder(() => modeler.saveXML({ format: true }).then(r => r.xml), naam() + '.bpmn', 'application/xml'));
-$('btn-folder').addEventListener('click', async () => {
-  const h = await pickFolder();
-  if (h) setStatus('Map gekozen: "' + h.name + '". Bewaren gaat nu rechtstreeks daarheen.', 'ok');
-});
-$('btn-svg').addEventListener('click', () => saveToFolder(() => modeler.saveSVG().then(r => r.svg), naam() + '.svg', 'image/svg+xml'));
+$('btn-save').addEventListener('click', save);
+$('btn-saveas').addEventListener('click', saveAs);
+$('btn-svg').addEventListener('click', exportSvg);
 
-// ---- Rechtstreeks bewaren in een gekozen map (File System Access API, Chrome/Edge) ----
-let dirHandle = null;
-idbGet('proces.dir').then(h => { if (h) dirHandle = h; }).catch(() => {});
+// ---- Opslaan in een bestand (File System Access API, Chrome/Edge) ----
+const getXml = () => modeler.saveXML({ format: true }).then(r => r.xml);
+const BPMN_TYPE = [{ description: 'BPMN-diagram', accept: { 'application/xml': ['.bpmn'] } }];
+let fileHandle = null;   // het huidige .bpmn-bestand
+idbGet('proces.file').then(h => { if (h) fileHandle = h; }).catch(() => {});
 
 function idb(){ return new Promise((res, rej) => { const r = indexedDB.open('proces-tool', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
 async function idbSet(k, v){ const db = await idb(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); }); }
@@ -468,26 +467,40 @@ async function ensurePermission(handle){
   if (!handle) return false;
   try { return (await handle.requestPermission({ mode: 'readwrite' })) === 'granted'; } catch(_){ return false; }
 }
-async function pickFolder(){
-  if (!window.showDirectoryPicker){ setStatus('Mappen kiezen werkt enkel in Chrome of Edge en op https/localhost.', 'err'); return null; }
-  try { dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' }); await idbSet('proces.dir', dirHandle); return dirHandle; }
-  catch(_){ return null; }   // gebruiker annuleerde
+async function writeHandle(handle, getData){
+  const w = await handle.createWritable();
+  await w.write(await getData());
+  await w.close();
 }
-// getData = async functie die de tekst oplevert. BELANGRIJK: eerst de map/toestemming regelen
-// (zolang de klik nog "vers" is — anders weigert de browser de mapkiezer), pas dan de XML bouwen.
-async function saveToFolder(getData, filename, mime){
-  if (!window.showDirectoryPicker){ setStatus('Geen map-opslag hier (geen Chrome/Edge of geen https/localhost) — bestand gedownload.', ''); download(await getData(), filename, mime); return; }
+
+// Opslaan: naar het huidige bestand; nog geen bestand (of geen toestemming) -> "Opslaan als…"
+async function save(){
+  if (!window.showSaveFilePicker){ download(await getXml(), naam() + '.bpmn', 'application/xml'); return; }   // andere browsers
+  if (!fileHandle) return saveAs();
+  if (!(await ensurePermission(fileHandle))) return saveAs();
   try {
-    if (!dirHandle){ if (!(await pickFolder())){ setStatus('Geen map gekozen.', 'err'); return; } }
-    if (!(await ensurePermission(dirHandle))){
-      if (!(await pickFolder()) || !(await ensurePermission(dirHandle))){ setStatus('Geen schrijftoestemming voor de map.', 'err'); return; }
-    }
-    const data = await getData();
-    const fh = await dirHandle.getFileHandle(filename, { create: true });
-    const w = await fh.createWritable();
-    await w.write(data); await w.close();
-    setStatus('Bewaard: ' + filename + ' in map "' + dirHandle.name + '".', 'ok');
-  } catch(e){ console.error(e); setStatus('Bewaren mislukt: ' + (e.message || e), 'err'); }
+    await writeHandle(fileHandle, getXml);
+    setStatus('Opgeslagen: ' + fileHandle.name, 'ok');
+  } catch(e){ console.error(e); setStatus('Opslaan mislukt: ' + (e.message || e), 'err'); }
+}
+// Opslaan als…: vraag locatie + naam, schrijf, en onthoud het bestand voor latere "Opslaan".
+async function saveAs(){
+  if (!window.showSaveFilePicker){ download(await getXml(), naam() + '.bpmn', 'application/xml'); return; }
+  try {
+    const h = await window.showSaveFilePicker({ suggestedName: naam() + '.bpmn', types: BPMN_TYPE });
+    fileHandle = h; await idbSet('proces.file', h);
+    await writeHandle(h, getXml);
+    setStatus('Opgeslagen als: ' + h.name, 'ok');
+  } catch(e){ if (e && e.name === 'AbortError') return; console.error(e); setStatus('Opslaan mislukt: ' + (e.message || e), 'err'); }
+}
+async function exportSvg(){
+  const getSvg = () => modeler.saveSVG().then(r => r.svg);
+  if (!window.showSaveFilePicker){ download(await getSvg(), naam() + '.svg', 'image/svg+xml'); return; }
+  try {
+    const h = await window.showSaveFilePicker({ suggestedName: naam() + '.svg', types: [{ description: 'SVG-afbeelding', accept: { 'image/svg+xml': ['.svg'] } }] });
+    await writeHandle(h, getSvg);
+    setStatus('SVG opgeslagen: ' + h.name, 'ok');
+  } catch(e){ if (e && e.name === 'AbortError') return; console.error(e); setStatus('SVG opslaan mislukt: ' + (e.message || e), 'err'); }
 }
 function naam(){
   let n = '';

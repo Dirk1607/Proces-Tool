@@ -414,11 +414,18 @@ $('btn-fit').addEventListener('click', fitView);
 function fitView(){
   const canvas = modeler.get('canvas');
   canvas.zoom('fit-viewport', 'auto');
-  // iets uitzoomen rond het midden voor wat marge (en zodat de start niet onder de werkbalk valt)
-  const vb = canvas.viewbox();
+  // iets uitzoomen rond het midden voor wat marge
+  let vb = canvas.viewbox();
   if (vb && vb.scale) canvas.zoom(vb.scale * 0.9);
-  // schuif het diagram weg van het zwevende gereedschapspalet (links) en de bovenrand
-  canvas.scroll({ dx: 80, dy: 24 });
+  // enkel bijschuiven als de inhoud te dicht bij het palet (links) of de bovenrand zit — en net genoeg
+  vb = canvas.viewbox();
+  if (vb && vb.inner && vb.scale){
+    const leftPx = (vb.inner.x - vb.x) * vb.scale;   // afstand inhoud-links → viewport-links
+    const topPx  = (vb.inner.y - vb.y) * vb.scale;
+    const dx = Math.max(0, 70 - leftPx);             // ruimte vrij voor het zwevende palet
+    const dy = Math.max(0, 24 - topPx);
+    if (dx || dy) canvas.scroll({ dx, dy });
+  }
 }
 $('btn-zin').addEventListener('click', () => modeler.get('zoomScroll').stepZoom(1));
 $('btn-zuit').addEventListener('click', () => modeler.get('zoomScroll').stepZoom(-1));
@@ -440,18 +447,12 @@ $('file-open').addEventListener('change', (e) => {
   e.target.value = '';
 });
 
-$('btn-save').addEventListener('click', async () => {
-  const { xml } = await modeler.saveXML({ format: true });
-  await saveToFolder(xml, naam() + '.bpmn', 'application/xml');
-});
+$('btn-save').addEventListener('click', () => saveToFolder(() => modeler.saveXML({ format: true }).then(r => r.xml), naam() + '.bpmn', 'application/xml'));
 $('btn-folder').addEventListener('click', async () => {
   const h = await pickFolder();
   if (h) setStatus('Map gekozen: "' + h.name + '". Bewaren gaat nu rechtstreeks daarheen.', 'ok');
 });
-$('btn-svg').addEventListener('click', async () => {
-  const { svg } = await modeler.saveSVG();
-  await saveToFolder(svg, naam() + '.svg', 'image/svg+xml');
-});
+$('btn-svg').addEventListener('click', () => saveToFolder(() => modeler.saveSVG().then(r => r.svg), naam() + '.svg', 'image/svg+xml'));
 
 // ---- Rechtstreeks bewaren in een gekozen map (File System Access API, Chrome/Edge) ----
 let dirHandle = null;
@@ -461,27 +462,32 @@ function idb(){ return new Promise((res, rej) => { const r = indexedDB.open('pro
 async function idbSet(k, v){ const db = await idb(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); }); }
 async function idbGet(k){ const db = await idb(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readonly'); const rq = t.objectStore('kv').get(k); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); }); }
 
+// requestPermission MOET als eerste await na de klik komen (anders vervalt de user-actie).
+// Geeft meteen "granted" terug zonder venster als de toestemming er al is.
 async function ensurePermission(handle){
   if (!handle) return false;
-  const opts = { mode: 'readwrite' };
-  if ((await handle.queryPermission(opts)) === 'granted') return true;
-  try { return (await handle.requestPermission(opts)) === 'granted'; } catch(_){ return false; }
+  try { return (await handle.requestPermission({ mode: 'readwrite' })) === 'granted'; } catch(_){ return false; }
 }
 async function pickFolder(){
-  if (!window.showDirectoryPicker){ setStatus('Mappen kiezen werkt enkel in Chrome of Edge; hier wordt gedownload.', 'err'); return null; }
-  try { dirHandle = await window.showDirectoryPicker(); await idbSet('proces.dir', dirHandle); return dirHandle; }
+  if (!window.showDirectoryPicker){ setStatus('Mappen kiezen werkt enkel in Chrome of Edge en op https/localhost.', 'err'); return null; }
+  try { dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' }); await idbSet('proces.dir', dirHandle); return dirHandle; }
   catch(_){ return null; }   // gebruiker annuleerde
 }
-async function saveToFolder(data, filename, mime){
-  if (!window.showDirectoryPicker){ download(data, filename, mime); return; }   // andere browsers: download
+// getData = async functie die de tekst oplevert. BELANGRIJK: eerst de map/toestemming regelen
+// (zolang de klik nog "vers" is — anders weigert de browser de mapkiezer), pas dan de XML bouwen.
+async function saveToFolder(getData, filename, mime){
+  if (!window.showDirectoryPicker){ setStatus('Geen map-opslag hier (geen Chrome/Edge of geen https/localhost) — bestand gedownload.', ''); download(await getData(), filename, mime); return; }
   try {
-    if (!dirHandle && !(await pickFolder())) return;
-    if (!(await ensurePermission(dirHandle))){ if (!(await pickFolder()) || !(await ensurePermission(dirHandle))) return; }
+    if (!dirHandle){ if (!(await pickFolder())){ setStatus('Geen map gekozen.', 'err'); return; } }
+    if (!(await ensurePermission(dirHandle))){
+      if (!(await pickFolder()) || !(await ensurePermission(dirHandle))){ setStatus('Geen schrijftoestemming voor de map.', 'err'); return; }
+    }
+    const data = await getData();
     const fh = await dirHandle.getFileHandle(filename, { create: true });
     const w = await fh.createWritable();
     await w.write(data); await w.close();
     setStatus('Bewaard: ' + filename + ' in map "' + dirHandle.name + '".', 'ok');
-  } catch(e){ console.error(e); setStatus('Bewaren in map mislukt (' + (e.message || e) + ') — gedownload i.p.v.', 'err'); download(data, filename, mime); }
+  } catch(e){ console.error(e); setStatus('Bewaren mislukt: ' + (e.message || e), 'err'); }
 }
 function naam(){
   let n = '';

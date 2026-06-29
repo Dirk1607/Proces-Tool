@@ -86,13 +86,6 @@
       <div class="hint" style="margin-top:6px">De sleutel wordt enkel in deze browser bewaard (localStorage) en gaat rechtstreeks naar Anthropic. Hij komt nooit in een bestand of op GitHub. Voor publiek hosten zetten we later een proxy.</div>
     </details>
 
-    <details id="prefs-box">
-      <summary>Mijn procesvoorkeuren (huisstijl)</summary>
-      <div class="hint" style="margin:6px 0">Beschrijf in gewone taal hoe Claude je processen moet opbouwen. Dit wordt bij elke generatie meegestuurd en blijft lokaal bewaard.</div>
-      <textarea id="style" style="min-height:150px"></textarea>
-      <button class="btn" id="btn-style-reset" style="margin-top:6px">Terug naar standaard</button>
-    </details>
-
     <div class="hint">
       Tip: Claude zet je tekst om naar stappen, beslissingen en pijlen in BPMN. Daarna sleep en wijzig je vrij in het diagram. Opslaan = bewaren in je gekozen map (.bpmn).
     </div>
@@ -120,7 +113,7 @@ const statusEl = $('status');
 function setStatus(msg, kind){ statusEl.className = 'status' + (kind ? ' ' + kind : ''); statusEl.innerHTML = msg; }
 
 // Versie — hoog deze op bij elke deploy, zo zie je meteen of de juiste build live staat.
-const VERSION = 'v1.2';
+const VERSION = 'v1.3';
 const BUILD = '2026-06-29';
 if ($('ver')) $('ver').textContent = VERSION + ' · ' + BUILD;
 if ($('copyright')) $('copyright').innerHTML = '© ' + new Date().getFullYear() + ' The Next Level · Proces-tool ' + VERSION + ' (' + BUILD + ')<br>Alle rechten voorbehouden.';
@@ -532,21 +525,14 @@ Technische regels (altijd volgen):
 - Zet de rol die het proces START als EERSTE in "lanes" (die komt bovenaan, zodat het proces linksboven begint).
 - Vermijd onnodig heen-en-weer springen tussen banen: ken een stap alleen een andere rol toe als die stap echt door iemand anders wordt uitgevoerd. Hou opeenvolgende stappen van dezelfde rol bij elkaar. Gebruik liever weinig rollen (2 à 3) dan veel.
 - Elk element kan een veld "doc" hebben (extra toelichting van de gebruiker); behoud dat ongewijzigd tenzij de opdracht het expliciet aanpast.
-- Geef enkel het proces terug volgens het opgelegde JSON-schema; geen uitleg.`;
 
-// Bewerkbare voorkeuren van de gebruiker (huisstijl) — standaardwaarde
-const DEFAULT_STYLE = `- Taal: Nederlands.
+Huisstijl (altijd volgen):
+- Taal: Nederlands.
 - Benoem taken als: werkwoord + van + zelfstandig naamwoord, bv. "Opmaken van het projectplan", "Goedkeuren van de offerte".
 - Detailniveau: gemiddeld — alleen de stappen die er echt toe doen, geen micro-stappen.
-- Start met een duidelijk beginpunt en eindig met een duidelijk eindresultaat.`;
+- Start met een duidelijk beginpunt en eindig met een duidelijk eindresultaat.
 
-// laad voorkeuren in het veld
-$('style').value = localStorage.getItem('proces.style') || DEFAULT_STYLE;
-$('style').addEventListener('input', () => localStorage.setItem('proces.style', $('style').value));
-$('btn-style-reset').addEventListener('click', () => {
-  $('style').value = DEFAULT_STYLE;
-  localStorage.setItem('proces.style', DEFAULT_STYLE);
-});
+- Geef enkel het proces terug volgens het opgelegde JSON-schema; geen uitleg.`;
 
 const SCHEMA = {
   type: 'object',
@@ -592,7 +578,7 @@ async function callClaude(userText){
     body: JSON.stringify({
       model: 'claude-opus-4-8',
       max_tokens: 4000,
-      system: SYSTEM_BASE + '\n\nVoorkeuren van de gebruiker (huisstijl):\n' + (($('style').value || DEFAULT_STYLE).trim()),
+      system: SYSTEM_BASE,
       output_config: { format: { type: 'json_schema', schema: SCHEMA } },
       messages: [{ role: 'user', content: userText }]
     })
